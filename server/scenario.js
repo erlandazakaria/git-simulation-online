@@ -19,6 +19,8 @@ export const FLOWS = {
 
 const SAM = { name: 'Sam (teammate)', email: 'sam@team.dev' };
 const THEMES = ['blue', 'green', 'red', 'purple', 'orange'];
+const LANGS = ['fr', 'de', 'es', 'id', 'ja'];
+const SETTINGS = 'team/settings.txt';
 
 export const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 12) || 'dev';
 
@@ -26,7 +28,7 @@ export function makePlayerVars(name, index, taken) {
   let slug = slugify(name);
   while (taken.has(slug)) slug += index + 1;
   taken.add(slug);
-  return { slug, n: index + 1, theme: THEMES[index % THEMES.length] };
+  return { slug, n: index + 1, theme: THEMES[index % THEMES.length], lang: LANGS[index % LANGS.length] };
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -47,9 +49,8 @@ export function seedOrigin(players, flowId) {
     'CHANGELOG.md': '# Changelog\n\n- 1.0.0 first release\n',
     'config.txt': 'app_name=Shop\nversion=1.0.0\n',
   }, 'Initial commit', SAM);
-  const ws = {};
+  const ws = { [SETTINGS]: '# Team settings (everybody edits this file!)\ntheme=light\n\nlanguage=en\n' };
   for (const p of players) {
-    ws[`players/${p.slug}/profile.txt`] = `name=${p.name}\ntheme=light\n`;
     ws[`players/${p.slug}/notes.txt`] = `# notes of ${p.name}\n- nothing yet\n`;
   }
   originCommit(o, 'main', ws, 'Add player workspaces', SAM);
@@ -81,17 +82,109 @@ const READ_ONLY_STAGE = (flowName) => ({
   ],
 });
 
+
+/* ------------------------------------------------------------------ relay
+   The heart of the conflict training: ALL players change the SAME line of a shared file.
+   Players then go one after another (a "relay"); the server keeps fetch/pull/merge/push/rebase
+   locked until everybody ahead of you has finished. Player 2 conflicts with player 1's change,
+   player 3 with player 2's resolution, and so on. Round 2 runs in reverse order, so whoever was
+   first (conflict-free) in round 1 is last in round 2 and gets to resolve conflicts too. */
+const ROUNDS = [
+  { n: 1, field: 'theme', val: (p) => p.theme, relay: 'asc', suffix: 'theme' },
+  { n: 2, field: 'language', val: (p) => p.lang, relay: 'desc', suffix: 'lang' },
+];
+const lineRe = (field, val) => new RegExp(`^${field}=${val}$`, 'm');
+const settingsOk = (t) => !hasMarkers(t) && /^theme=\w+$/m.test(t || '') && /^language=\w+$/m.test(t || '');
+
+function relayPrepStage(flow, R) {
+  const base = flow === 'gitflow' ? 'develop' : 'main';
+  const br = (p) => `${flow === 'gitflow' ? 'feature' : 'feat'}/${p.slug}-${R.suffix}`;
+  return {
+    id: `prepare-conflict-${R.n}`,
+    title: `Prepare change ${R.n}/2`,
+    intro: `Everybody on the team is about to change the **same line** of \`${SETTINGS}\` (\`${R.field}=\`), each with their own value. First everyone prepares their change **locally**. Do not sync with origin yet; that will be done one teammate at a time.`,
+    tasks: (p) => [
+      T(`prep${R.n}-update`, `Start from the latest ${base}`, `Switch to \`${base}\` and pull, so every teammate starts from the same code.`, [
+        H('Switch, then pull.'),
+        H('Run these:', `git switch ${base}\ngit pull`),
+      ], ({ r, ran }) => onB(r, base) && ran(/^git pull/) && isAncestor(r, r.remote['origin/' + base], headOf(r))),
+      T(`prep${R.n}-branch`, 'Create your branch', `Create \`${br(p)}\` from \`${base}\`.`, [H('Run this:', `git switch -c ${br(p)}`)], ({ r }) => onB(r, br(p)) && isAncestor(r, r.branches[base], headOf(r))),
+      T(`prep${R.n}-edit`, `Set your ${R.field}`, `Open \`${SETTINGS}\` and change the \`${R.field}=\` line to \`${R.field}=${R.val(p)}\` (leave the rest of the file as it is).`, [
+        H('Open the file in the editor (click it in Files) and save.'),
+        H('Open it:', `edit ${SETTINGS}`),
+      ], ({ r }) => lineRe(R.field, R.val(p)).test(r.work[SETTINGS] || '')),
+      T(`prep${R.n}-commit`, 'Commit your change', 'Commit it. **Do not push or pull yet!**', [H('Run this:', `git commit -am "Set ${R.field} to ${R.val(p)}"`)], ({ r }) => lineRe(R.field, R.val(p)).test(fileAt(r, r.branches[br(p)], SETTINGS) || '') && r.branches[br(p)] !== r.branches[base]),
+    ],
+  };
+}
+
+function gitflowRelayStage(R) {
+  const br = (p) => `feature/${p.slug}-${R.suffix}`;
+  return {
+    id: `conflict-${R.n}`,
+    relay: R.relay,
+    title: `Conflict relay ${R.n}/2`,
+    intro: `**Teamwork time.** Everybody changed the same line, so you must integrate **one after another**: ${R.relay === 'asc' ? 'in joining order' : 'in REVERSE order this time'}. Whoever goes first merges cleanly; every other teammate will hit a conflict with what the previous teammate just pushed. Git cannot choose between two people's edits, so you decide. Sync commands unlock when it is your turn.`,
+    tasks: (p) => {
+      const inMerge = (r) => r.state?.type === 'merge';
+      const done = (r) => isAncestor(r, r.branches[br(p)], r.branches.develop) && !r.state;
+      return [
+        T(`conf${R.n}-update`, 'Update develop', 'Switch to `develop` and pull (this brings in your teammates\' work that is already on origin).', [
+          H('Switch, then pull.'),
+          H('Run these:', 'git switch develop\ngit pull'),
+        ], ({ r, ran }) => onB(r, 'develop') && ran(/^git pull/) && isAncestor(r, r.remote['origin/develop'], headOf(r))),
+        T(`conf${R.n}-merge`, 'Merge your branch', `Merge \`${br(p)}\` into \`develop\`. If a teammate went before you, git will report a **CONFLICT**. Otherwise it merges cleanly: you are first!`, [
+          H('Stand on develop, then merge.'),
+          H('Run this:', `git merge ${br(p)}`),
+        ], ({ r, ran }) => (inMerge(r) && r.state.conflicts.includes(SETTINGS)) || (done(r) && ran(/^git merge/))),
+        T(`conf${R.n}-resolve`, 'Resolve the conflict (if any)', `Open \`${SETTINGS}\`. If you see markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`), keep the \`${R.field}=\` value you want (yours, your teammate's, or a new one) and **delete all marker lines**. Then save. No markers? Then nothing to do.`, [
+          H('`<<<<<<< HEAD` ... `=======` is what is already on develop (your teammates). `=======` ... `>>>>>>>` is your branch. Pick one, delete the 3 marker lines. The editor has buttons for that.'),
+          H('Open it:', `edit ${SETTINGS}`),
+        ], ({ r }) => (inMerge(r) || done(r)) && settingsOk(r.work[SETTINGS]), { why: 'Git never edits the decision for you. A human must choose, and usually must ask the teammate!' }),
+        T(`conf${R.n}-add`, 'Mark it resolved', 'Stage the file to tell git the conflict is fixed.', [H('Run this:', `git add ${SETTINGS}`)], ({ r }) => (inMerge(r) && r.state.conflicts.length === 0) || done(r)),
+        T(`conf${R.n}-commit`, 'Finish the merge', 'Conclude the merge with a commit.', [H('Run this:', 'git commit -m "Merge settings change, resolve conflict"')], ({ r }) => done(r)),
+        T(`conf${R.n}-push`, 'Push the result', 'Push `develop` so the next teammate can continue.', [H('Run this:', 'git push')], ({ r, o }) => isAncestor(o, r.branches[br(p)], o.branches.develop) && settingsOk(fileAt(o, o.branches.develop, SETTINGS))),
+      ];
+    },
+  };
+}
+
+function trunkRelayStage(R) {
+  const br = (p) => `feat/${p.slug}-${R.suffix}`;
+  return {
+    id: `conflict-${R.n}`,
+    relay: R.relay,
+    title: `Rebase relay ${R.n}/2`,
+    intro: `**Teamwork time.** Everybody changed the same line, so you land your changes **one after another**: ${R.relay === 'asc' ? 'in joining order' : 'in REVERSE order this time'}. Whoever goes first rebases cleanly; every other teammate's rebase **stops with a conflict** against the previous teammate's change. Sync commands unlock when it is your turn.`,
+    tasks: (p) => {
+      const inRb = (r) => r.state?.type === 'rebase';
+      const done = (r) => !r.state && onB(r, br(p)) && isAncestor(r, r.remote['origin/main'], headOf(r));
+      return [
+        T(`rc${R.n}-rebase`, 'Fetch and rebase', 'Fetch, then rebase your branch onto `origin/main`. If a teammate went first, git stops with a conflict.', [
+          H('You must be on your branch.'),
+          H('Run these:', 'git fetch\ngit rebase origin/main'),
+        ], ({ r, ran }) => (inRb(r) && r.state.conflicts.includes(SETTINGS)) || (done(r) && ran(/^git rebase/))),
+        T(`rc${R.n}-resolve`, 'Resolve the conflict (if any)', `Edit \`${SETTINGS}\`: keep one \`${R.field}=\` line and delete the 3 marker lines. No markers? Nothing to do.`, [
+          H('`<<<<<<< HEAD` is main (your teammates). The other half is your commit.'),
+          H('Open it:', `edit ${SETTINGS}`),
+        ], ({ r }) => (inRb(r) || done(r)) && settingsOk(r.work[SETTINGS])),
+        T(`rc${R.n}-add`, 'Mark it resolved', 'Stage the file.', [H('Run this:', `git add ${SETTINGS}`)], ({ r }) => (inRb(r) && r.state.conflicts.length === 0) || done(r)),
+        T(`rc${R.n}-continue`, 'Continue the rebase', 'Carry on replaying your commits (not `git commit`!).', [H('Run this:', 'git rebase --continue')], ({ r }) => done(r)),
+        T(`rc${R.n}-land`, 'Land it', 'Switch to `main`, pull, merge your branch, push, so the next teammate can go.', [H('Run these:', `git switch main\ngit pull\ngit merge ${br(p)}\ngit push`)], ({ r, o }) => isAncestor(o, r.branches[br(p)], o.branches.main) && settingsOk(fileAt(o, o.branches.main, SETTINGS))),
+      ];
+    },
+  };
+}
+
 /* ================================================================ GIT FLOW */
 
 function gitflowStages() {
   const feat = (p) => `feature/${p.slug}-profile`;
-  const featTheme = (p) => `feature/${p.slug}-theme`;
   const hot = (p) => `hotfix/${p.slug}`;
   const rel = (p) => `release/${p.slug}-1.0.0`;
   const tagHot = (p) => `v1.0.${p.n}`;
   const tagRel = (p) => `${p.slug}-v1.0.0`;
   const file = (p) => `features/${p.slug}.txt`;
-  const profile = (p) => `players/${p.slug}/profile.txt`;
   const notes = (p) => `players/${p.slug}/notes.txt`;
   const bug = (p) => `bugs/${p.slug}.txt`;
   const ver = (p) => `modules/${p.slug}/VERSION`;
@@ -163,67 +256,7 @@ function gitflowStages() {
       ],
     },
 
-    {
-      id: 'prepare-conflict',
-      title: 'Prepare a change',
-      intro: 'Next you will **change your own settings file**. Do this on a fresh feature branch cut from `develop`. Do **not** pull again after you commit. (A teammate is about to change the same line…)',
-      tasks: (p) => [
-        T('theme-branch', 'Branch for the theme change', `Create \`${featTheme(p)}\` from \`develop\`.`, [
-          H('Make sure you are on `develop`, then create the branch.'),
-          H('Run this:', `git switch -c ${featTheme(p)}`),
-        ], ({ r }) => onB(r, featTheme(p)) && isAncestor(r, r.branches.develop, headOf(r))),
-        T('theme-edit', 'Change your theme', `Open \`${profile(p)}\` in the editor and change the line \`theme=light\` to \`theme=${p.theme}\`.`, [
-          H('Click the file in the Files tab (or type `edit <file>`), change the line and Save.'),
-          H('Or from the shell:', `edit ${profile(p)}`),
-        ], ({ r }) => new RegExp(`^theme=${p.theme}$`, 'm').test(r.work[profile(p)] || '')),
-        T('theme-commit', 'Commit the change', 'Commit your edit. Tip: `-a` stages files git already tracks.', [
-          H('`git commit -am "message"` stages modified tracked files and commits in one go (it does not add new files).'),
-          H('Run this:', `git commit -am "Set my theme to ${p.theme}"`),
-        ], ({ r }) => new RegExp(`^theme=${p.theme}$`, 'm').test(fileAt(r, r.branches[featTheme(p)], profile(p)) || '') && r.branches[featTheme(p)] !== r.branches.develop),
-      ],
-    },
-
-    {
-      id: 'conflict',
-      title: 'Resolve a merge conflict',
-      intro: 'Sam just pushed a commit to `develop` that changed the **same line** (`theme=`) in your profile file. Git cannot guess whose version is right, so it will stop and ask **you**. Conflicts are normal; the skill is staying calm and doing the steps in order.',
-      setup: (o, meta, players) => {
-        const ch = {};
-        for (const p of players) ch[profile(p)] = `name=${p.name}\ntheme=dark\n`;
-        meta.samTheme = originCommit(o, 'develop', ch, 'feat: dark theme by default', SAM);
-        return ['Sam pushed "feat: dark theme by default" to origin/develop'];
-      },
-      tasks: (p) => {
-        const inMerge = (r) => r.state?.type === 'merge';
-        const done = (r) => merged(r, p, featTheme(p), 'develop');
-        return [
-          T('conf-update', 'Update develop', 'Switch to `develop` and pull Sam\'s change.', [
-            H('Same as before: switch, then pull.'),
-            H('Run these:', 'git switch develop\ngit pull'),
-          ], ({ r, meta }) => onB(r, 'develop') && isAncestor(r, meta.samTheme, headOf(r))),
-          T('conf-merge', 'Merge your branch (expect a conflict!)', `Merge \`${featTheme(p)}\` into \`develop\`. Git will report a **CONFLICT**. That is intended.`, [
-            H('Merge as usual; git will stop halfway.'),
-            H('Run this:', `git merge ${featTheme(p)}`),
-          ], ({ r }) => (inMerge(r) && r.state.conflicts.includes(profile(p))) || done(r)),
-          T('conf-resolve', 'Fix the conflicted file', `Open \`${profile(p)}\`. You will see conflict markers: \`<<<<<<<\`, \`=======\`, \`>>>>>>>\`. Keep the **one** \`theme=\` line you want and **delete all the marker lines**. Then save.`, [
-            H('The part between `<<<<<<< HEAD` and `=======` is develop (Sam). The part until `>>>>>>>` is your branch. Pick one (or write a new value), and remove the 3 marker lines. The editor has quick buttons too.'),
-            H('Open it:', `edit ${profile(p)}`),
-          ], ({ r }) => (inMerge(r) || done(r)) && !hasMarkers(r.work[profile(p)]) && /^theme=\w+$/m.test(r.work[profile(p)] || '') && /^name=/m.test(r.work[profile(p)] || ''), { why: 'Git never edits the decision for you. A human must choose.' }),
-          T('conf-add', 'Mark it resolved', 'Tell git the conflict is fixed by staging the file.', [
-            H('Resolving = `git add` the file. `git status` shows what is left.'),
-            H('Run this:', `git add ${profile(p)}`),
-          ], ({ r }) => (inMerge(r) && r.state.conflicts.length === 0) || done(r)),
-          T('conf-commit', 'Finish the merge', 'Conclude the merge with a commit.', [
-            H('The merge is still open. A plain commit finishes it (git has already prepared the message: add `-m` to set your own).'),
-            H('Run this:', 'git commit -m "Merge theme change, resolve conflict"'),
-          ], ({ r }) => done(r)),
-          T('conf-push', 'Push the result', 'Push `develop`. If it is rejected, pull first (and if git asks you for another conflict, repeat the steps).', [
-            H('`git push`. If rejected → `git pull` → `git push`.'),
-            H('Run this:', 'git push'),
-          ], ({ r, o }) => isAncestor(o, r.branches[featTheme(p)], o.branches.develop)),
-        ];
-      },
-    },
+    ...ROUNDS.flatMap((R) => [relayPrepStage('gitflow', R), gitflowRelayStage(R)]),
 
     {
       id: 'hotfix',
@@ -316,9 +349,7 @@ function gitflowStages() {
 
 function trunkStages() {
   const br = (p) => `feat/${p.slug}-greeting`;
-  const brTheme = (p) => `feat/${p.slug}-theme`;
   const file = (p) => `features/${p.slug}.txt`;
-  const profile = (p) => `players/${p.slug}/profile.txt`;
   const notes = (p) => `players/${p.slug}/notes.txt`;
   const svc = (p) => `services/${p.slug}.txt`;
   const tag = (p) => `${p.slug}-v1.1.0`;
@@ -384,50 +415,7 @@ function trunkStages() {
       ],
     },
 
-    {
-      id: 'prepare-conflict',
-      title: 'Prepare a change',
-      intro: 'Your next change touches your profile file. Do it quickly on a short branch from `main`, commit, and **do not pull** afterwards. A teammate is about to touch the same line.',
-      tasks: (p) => [
-        T('tc-branch', 'Branch from main', `Create \`${brTheme(p)}\`.`, [H('Run this:', `git switch -c ${brTheme(p)}`)], ({ r }) => onB(r, brTheme(p)) && isAncestor(r, r.branches.main, headOf(r))),
-        T('tc-edit', 'Change your theme', `In \`${profile(p)}\` change \`theme=light\` to \`theme=${p.theme}\`.`, [H('Open it:', `edit ${profile(p)}`)], ({ r }) => new RegExp(`^theme=${p.theme}$`, 'm').test(r.work[profile(p)] || '')),
-        T('tc-commit', 'Commit', 'Commit your change.', [H('Run this:', `git commit -am "Set my theme to ${p.theme}"`)], ({ r }) => new RegExp(`^theme=${p.theme}$`, 'm').test(fileAt(r, r.branches[brTheme(p)], profile(p)) || '') && r.branches[brTheme(p)] !== r.branches.main),
-      ],
-    },
-
-    {
-      id: 'conflict',
-      title: 'Conflict during a rebase',
-      intro: 'Sam pushed a commit to `main` that changed the **same line** in your profile. Rebasing replays your commit onto it, so git stops with a conflict **in the middle of the rebase**. You resolve it, `git add`, and `git rebase --continue`.',
-      setup: (o, meta, players) => {
-        const ch = {};
-        for (const p of players) ch[profile(p)] = `name=${p.name}\ntheme=dark\n`;
-        meta.samTheme = originCommit(o, 'main', ch, 'feat: dark theme by default', SAM);
-        return ['Sam pushed "feat: dark theme by default" to origin/main'];
-      },
-      tasks: (p) => {
-        const inRb = (r) => r.state?.type === 'rebase';
-        const done = (r, meta) => !r.state && onB(r, brTheme(p)) && isAncestor(r, meta.samTheme, headOf(r));
-        return [
-          T('rc-rebase', 'Fetch and rebase (expect a conflict!)', 'Fetch, then rebase your branch onto `origin/main`.', [
-            H('You must be on your theme branch.'),
-            H('Run these:', 'git fetch\ngit rebase origin/main'),
-          ], ({ r, meta }) => (inRb(r) && r.state.conflicts.includes(profile(p))) || done(r, meta)),
-          T('rc-resolve', 'Fix the file', `Edit \`${profile(p)}\`, keep one \`theme=\` line, delete the 3 marker lines.`, [
-            H('`<<<<<<< HEAD` is main (Sam). The other half is your commit. Choose.'),
-            H('Open it:', `edit ${profile(p)}`),
-          ], ({ r, meta }) => (inRb(r) || done(r, meta)) && !hasMarkers(r.work[profile(p)]) && /^theme=\w+$/m.test(r.work[profile(p)] || '') && /^name=/m.test(r.work[profile(p)] || '')),
-          T('rc-add', 'Mark it resolved', 'Stage the file.', [H('Run this:', `git add ${profile(p)}`)], ({ r, meta }) => (inRb(r) && r.state.conflicts.length === 0) || done(r, meta)),
-          T('rc-continue', 'Continue the rebase', 'Tell git to carry on replaying your commits.', [
-            H('Do **not** use `git commit` here; the rebase has its own command.'),
-            H('Run this:', 'git rebase --continue'),
-          ], ({ r, meta }) => done(r, meta)),
-          T('rc-land', 'Land it', 'Switch to `main`, pull, merge your branch, push.', [
-            H('Run these:', `git switch main\ngit pull\ngit merge ${brTheme(p)}\ngit push`),
-          ], ({ r, o }) => isAncestor(o, r.branches[brTheme(p)], o.branches.main)),
-        ];
-      },
-    },
+    ...ROUNDS.flatMap((R) => [relayPrepStage('trunk', R), trunkRelayStage(R)]),
 
     {
       id: 'revert',

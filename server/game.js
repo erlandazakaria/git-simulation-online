@@ -48,6 +48,7 @@ export class Game {
       stages: null,
       meta: {},
       stageStarted: new Set(),
+      relayOpen: new Set(),
       feed: [],
       lastActive: Date.now(),
       startedAt: null,
@@ -214,6 +215,13 @@ export class Game {
 
   forceRelease(room, pl) {
     if (pl.id !== room.hostId || room.status !== 'playing') return;
+    const stuck = [...room.players.values()].filter((p) => p.connected && this.relayInfo(room, p)?.blockedBy.length);
+    if (stuck.length) {
+      for (const p of stuck) room.relayOpen.add(p.stageIdx);
+      this.say(room, `${pl.name} (host) unlocked the turn order, everyone may sync now.`);
+      this.broadcast(room);
+      return;
+    }
     const waiting = [...room.players.values()].filter((p) => p.waiting && !p.finished);
     if (!waiting.length) return;
     const s = Math.min(...waiting.map((p) => p.stageIdx));
@@ -222,11 +230,27 @@ export class Game {
     this.broadcast(room);
   }
 
+  /** Relay stages: players integrate one after another. Returns null when no relay applies. */
+  relayInfo(room, pl) {
+    const st = room.stages?.[pl.stageIdx];
+    if (!st?.relay || pl.waiting || pl.finished) return null;
+    const order = [...room.players.values()];
+    if (st.relay === 'desc') order.reverse();
+    const i = order.findIndex((p) => p.id === pl.id);
+    const open = room.relayOpen.has(pl.stageIdx);
+    const blockedBy = open ? [] : order.slice(0, i).filter((p) => p.connected && !(p.finished || p.stageIdx > pl.stageIdx || (p.stageIdx === pl.stageIdx && p.waiting))).map((p) => p.name);
+    return { order: order.map((p) => p.name), position: i + 1, blockedBy };
+  }
+
   /* --------------------------------------------------------------- actions */
 
   runCommand(room, pl, line) {
     if (room.status === 'lobby') return { out: 'The game has not started yet.', code: 1 };
     line = String(line || '').slice(0, 400);
+    if (/^\s*git\s+(fetch|pull|merge|push|rebase|cherry-pick)\b/.test(line) && !/--(continue|abort|skip)\b/.test(line)) {
+      const info = this.relayInfo(room, pl);
+      if (info?.blockedBy.length) return { out: `⏳ Not your turn yet. Waiting for ${info.blockedBy.join(', ')} to finish and push first.\n   (git fetch / pull / merge / push / rebase unlock when your teammates ahead of you are done. Everyone works on the same line, so you must go one after another.)`, code: 1 };
+    }
     const res = run(pl.repo, room.origin, line);
     pl.hist.push({ line: line.trim(), code: res.code });
     if (pl.hist.length > 400) { pl.hist.splice(0, 100); pl.taskHistStart = Math.max(0, pl.taskHistStart - 100); }
@@ -347,6 +371,7 @@ export class Game {
       done: pl.doneTasks,
       total,
       task: null,
+      turn: this.relayInfo(room, pl),
       allTasks: tasks.map((t, i) => ({ id: t.id, title: t.title, state: pl.waiting || pl.finished || i < pl.taskIdx ? 'done' : i === pl.taskIdx ? 'current' : 'todo' })),
     };
     if (!pl.waiting && !pl.finished) {

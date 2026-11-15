@@ -20,7 +20,7 @@ function step(g, room, pl) {
   const task = g.tasksOf(room, pl)[pl.taskIdx];
   const last = task.hints[task.hints.length - 1];
   const cmd = last.cmd || '';
-  const run = (l) => { const r = g.runCommand(room, pl, l); return { ...r, out: strip(r.out) }; };
+  const run = (l) => { const r = g.runCommand(room, pl, l); if (/CONFLICT/.test(r.out)) pl.conflicts = (pl.conflicts || 0) + 1; return { ...r, out: strip(r.out) }; };
   const logs = [];
   for (let line of cmd.split('\n').filter(Boolean)) {
     if (line.includes('<id>')) {
@@ -34,7 +34,7 @@ function step(g, room, pl) {
       const cur = pl.repo.work[path] ?? '';
       let neu;
       if (/VERSION$/.test(path)) neu = '1.0.0\n';
-      else if (/profile\.txt$/.test(path)) neu = hasMarkers(cur) ? `name=${pl.name}\ntheme=${pl.vars.theme}\n` : cur.replace('theme=light', `theme=${pl.vars.theme}`);
+      else if (/settings\.txt$/.test(path)) neu = hasMarkers(cur) ? cur.replace(/<<<<<<< [^\n]*\n([\s\S]*?)=======\n[\s\S]*?>>>>>>> [^\n]*\n?/g, '$1') : /theme=light/.test(cur) ? cur.replace('theme=light', `theme=${pl.vars.theme}`) : cur.replace(/^language=\w+/m, `language=${pl.vars.lang}`);
       else if (/bugs\//.test(path)) neu = cur.replace('status=broken', 'status=fixed');
       else neu = cur + 'x\n';
       g.saveFile(room, pl, path, neu);
@@ -60,6 +60,7 @@ function playAll(flow, names) {
     let moved = false;
     for (const pl of players) {
       if (pl.finished || pl.waiting) continue;
+      if (g.relayInfo(room, pl)?.blockedBy.length) continue; // not this player's turn
       const before = pl.doneTasks;
       const id = g.tasksOf(room, pl)[pl.taskIdx].id;
       const logs = step(g, room, pl);
@@ -75,6 +76,10 @@ function playAll(flow, names) {
   assert.equal(room.status, 'done');
   const counts = new Set(players.map((p) => p.doneTasks));
   assert.equal(counts.size, 1, 'everyone does the same number of tasks');
+  // the relay makes everybody (except the very first/last in each round) conflict with a teammate
+  for (const p of players) assert.ok((p.conflicts || 0) >= 1, `${p.name} never hit a conflict`);
+  const first = players[0], last = players[players.length - 1];
+  assert.ok(first.conflicts >= 1 && last.conflicts >= 1);
   return { room, players };
 }
 

@@ -176,6 +176,14 @@ function renderTask(v) {
       v.you.host && p.waitingOn.length ? h('button', { class: 'btn small', onclick: () => send({ t: 'force' }) }, 'Move on without them') : null));
   } else {
     const t = p.task;
+    if (p.turn) {
+      const blocked = p.turn.blockedBy.length > 0;
+      kids.push(h('div', { class: `relay${blocked ? ' wait' : ' go'}` },
+        h('b', { text: blocked ? `⏳ Not your turn: waiting for ${p.turn.blockedBy.join(', ')}` : '🟢 It\'s your turn to sync!' }),
+        h('div', { class: 'order' }, ...p.turn.order.flatMap((n, i) => [i ? h('span', { class: 'arrow', text: '→' }) : null, h('span', { class: `ord${n === v.you.name ? ' me' : ''}`, text: `${i + 1}. ${n}` })].filter(Boolean))),
+        h('span', { class: 'muted small', text: blocked ? 'Fetch / pull / merge / push / rebase are locked until then. Check what the teammates ahead of you changed in the Origin tab.' : 'Teammates behind you are waiting for your push.' }),
+        blocked && v.you.host ? h('button', { class: 'btn tiny', onclick: () => send({ t: 'force' }) }, 'Unlock turn order') : null));
+    }
     kids.push(h('div', { class: 'task-now' },
       h('div', { class: 'step', text: `Task ${p.taskIdx + 1} of ${p.taskCount}` }),
       h('h4', { text: t.title }),

@@ -13,15 +13,16 @@ npm test           # engine + full scenario runs (2, 3 and 5 simulated players)
 - **A real (simulated) git.** `server/gitsim.js` is an in-memory git: commits, branches, tags, staging area, `merge` (fast-forward / 3-way / `--no-ff`), `rebase` (incl. conflicts, `--continue`, `--abort`), `cherry-pick`, `revert`, `stash`, `reset`, `restore`, `fetch/pull/push` (with real rejections, `-u`, `--force-with-lease`, delete) and line-based 3-way merge with conflict markers.
 - **Each player has a private clone; the room has one shared `origin`.** Pushes and pulls between players are real, so "rejected, fetch first" happens naturally.
 - **Click or type.** A real-looking terminal (history, Tab completion, ANSI colours), quick-command buttons, a file editor with one-click conflict helpers, a branches panel, and commit graphs for your repo and for origin.
-- **Same learning for everyone.** Tasks are parameterised per player (own branch names, own files) and verified from repository *state*, not by matching the exact command, so any valid way of doing it counts. Each stage is a barrier: the next stage starts when everybody finished the current one. At the start of a stage a teammate bot ("Sam") pushes to origin. That is what sets up your merge conflict. Each player conflicts on their *own* file, so everyone practises the same thing.
+- **Same learning for everyone.** Tasks are parameterised per player (own branch names, own files) and verified from repository *state*, not by matching the exact command, so any valid way of doing it counts. Each stage is a barrier: the next stage starts when everybody finished the current one. A teammate bot ("Sam") only sets the scene (new commits, bug reports); it never causes your conflicts.
+- **Conflicts come from your teammates (relay).** Everyone changes the *same line* of `team/settings.txt`, then players integrate **one after another**: player 1 merges/rebases cleanly and pushes, player 2 conflicts with player 1's change, player 3 conflicts with player 2's resolution, and so on. The server keeps `fetch/pull/merge/push/rebase` locked until everyone ahead of you finished (the host can unlock it if someone is AFK). **Round 2 runs in reverse order** (on the `language=` line), so whoever went first conflict-free in round 1 resolves conflicts in round 2.
 - **Progressive hints** (concept first, exact command last) and a short "why it matters" on key tasks. A cheat sheet and team stats are shown at the end.
 
 ## Workflows
 
 | Flow | Stages |
 |---|---|
-| **Git Flow** (45 tasks) | clone/inspect · feature branch off `develop` · integrate (pull, merge, push, delete branches) · prepare change · **merge conflict** · **hotfix** (stash, `hotfix/*` from `main`, tag, back-merge to `develop`) · **release** (`release/*`, `--no-ff` into `main`, tag, back-merge) |
-| **Trunk-based** (32 tasks) | clone/inspect · short-lived branch with small commits · `fetch` + **rebase** + `--force-with-lease` · prepare change · **conflict during rebase** · **revert** a bad commit on `main` (with stash) · release by tag |
+| **Git Flow** (56 tasks) | clone/inspect · feature branch off `develop` · integrate (pull, merge, push, delete branches) · prepare change · **2-round merge-conflict relay** · **hotfix** (stash, `hotfix/*` from `main`, tag, back-merge to `develop`) · **release** (`release/*`, `--no-ff` into `main`, tag, back-merge) |
+| **Trunk-based** (42 tasks) | clone/inspect · short-lived branch with small commits · `fetch` + **rebase** + `--force-with-lease` · prepare change · **2-round conflict relay during rebase** · **revert** a bad commit on `main` (with stash) · release by tag |
 
 ## Adding or changing a scenario
 

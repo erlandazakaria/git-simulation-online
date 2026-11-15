@@ -1004,8 +1004,14 @@ function cmdRebase(r, args) {
     if (args.includes('--skip')) { const H = headTree(r); r.index = { ...H }; r.work = { ...H }; }
     else {
       const H = headTree(r);
-      if (JSON.stringify(sortObj(H)) === JSON.stringify(sortObj(r.index))) return fail('No changes - did you forget to use \'git add\'?\nIf there is nothing left to stage, chances are that something else\nalready introduced the same changes; you might want to skip this patch (git rebase --skip).');
       const cm = r.commits[st.cur];
+      if (JSON.stringify(sortObj(H)) === JSON.stringify(sortObj(r.index))) {
+        // resolution equals what is already upstream: git drops the now-empty commit
+        const dropped = `dropping ${short(st.cur)} ${firstLine(cm.msg)} -- patch contents already upstream`;
+        st.conflicts = []; st.cur = null;
+        const res = runRebase(r, [], 0);
+        return { ...res, out: [dropped, res.out].join('\n') };
+      }
       const id = makeCommit(r, { parents: [headId(r)], tree: { ...r.index }, msg: cm.msg, author: cm.author });
       moveHead(r, id);
     }

@@ -227,3 +227,11 @@ legend { font-size: 13px; color: var(--muted); padding: 0; margin-bottom: 6px; }
 .stats th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px 4px 0; }
 .stats td { padding: 4px 6px 4px 0; border-top: 1px solid var(--line); }
 .cheat { list-style: none; padding: 0; margin: 0; display: grid; gap: 5px; font-size: 13px; }
+
+.relay { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 6px; }
+.relay.wait { border-color: #5a4a1c; background: #1f1a0e; }
+.relay.go { border-color: #245a2c; background: #101c13; }
+.relay .order { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; font-size: 12px; }
+.relay .ord { background: var(--panel-2); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; }
+.relay .ord.me { border-color: var(--accent); color: var(--accent-2); }
+.relay .arrow { color: var(--muted); }
