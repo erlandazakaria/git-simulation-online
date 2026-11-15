@@ -1,0 +1,13 @@
+{
+  "name": "git-simulation-online",
+  "version": "1.0.0",
+  "description": "Multiplayer git training simulator: 2-5 players, shared simulated origin, server-defined scenarios.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/engine.test.js test/scenario.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

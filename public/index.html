@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git Simulation Online</title>
+<meta name="description" content="Learn git by doing it together: a multiplayer git training room with no real repository needed.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f05133'/%3E%3Cg stroke='white' stroke-width='2.4' fill='white'%3E%3Cpath d='M10 8v16M10 14c0 5 12 1 12 6' fill='none'/%3E%3Ccircle cx='10' cy='8' r='2.8'/%3E%3Ccircle cx='10' cy='24' r='2.8'/%3E%3Ccircle cx='22' cy='20' r='2.8'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ LANDING ============ -->
+<main id="screen-landing" class="screen landing" hidden>
+  <header class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1>Git Simulation Online</h1>
+      <p>Learn git the way you'll use it at work: together, with real pushes, rejections and conflicts. No GitHub account, no real repo.</p>
+    </div>
+  </header>
+
+  <div class="cards">
+    <form id="form-create" class="card" autocomplete="off">
+      <h2>Create a room</h2>
+      <label>Your name<input id="create-name" maxlength="14" placeholder="e.g. Mia" required></label>
+      <fieldset>
+        <legend>Workflow</legend>
+        <div id="flow-picker" class="flow-picker"></div>
+      </fieldset>
+      <button class="btn primary" type="submit">Create room</button>
+    </form>
+
+    <form id="form-join" class="card" autocomplete="off">
+      <h2>Join a room</h2>
+      <label>Your name<input id="join-name" maxlength="14" placeholder="e.g. Jon" required></label>
+      <label>Room code<input id="join-code" maxlength="4" class="code-input" placeholder="ABCD" required></label>
+      <button class="btn" type="submit">Join</button>
+      <p class="muted small">2 to 5 players per room. Everybody gets exactly the same tasks.</p>
+    </form>
+  </div>
+
+  <section class="how">
+    <div><b>1 · Same tasks for all</b><span>The server decides the scenario. Clone, branch, commit, push, conflicts, hotfixes, releases.</span></div>
+    <div><b>2 · A shared origin</b><span>Your pushes land on a server copy your teammates pull from, so rejected pushes are real.</span></div>
+    <div><b>3 · Click or type</b><span>Use the quick buttons or type the real git commands. The terminal shows what runs.</span></div>
+  </section>
+  <p id="landing-error" class="error" role="alert"></p>
+</main>
+
+<!-- ============ LOBBY ============ -->
+<main id="screen-lobby" class="screen lobby" hidden>
+  <header class="lobby-head">
+    <div>
+      <p class="eyebrow">Room code</p>
+      <div class="code-row"><span id="lobby-code" class="room-code">----</span><button id="btn-copy" class="btn small" type="button">Copy invite link</button></div>
+    </div>
+    <button id="btn-leave-lobby" class="btn ghost small" type="button">Leave</button>
+  </header>
+
+  <div class="lobby-grid">
+    <section class="card">
+      <h2>Players <span id="lobby-count" class="muted"></span></h2>
+      <ul id="lobby-players" class="slots"></ul>
+    </section>
+    <section class="card">
+      <h2>Workflow</h2>
+      <div id="lobby-flow" class="flow-picker"></div>
+      <h3>What you'll practise</h3>
+      <ol id="lobby-outline" class="outline"></ol>
+    </section>
+  </div>
+
+  <div class="lobby-actions">
+    <button id="btn-start" class="btn primary big" type="button">Start game</button>
+    <p id="lobby-hint" class="muted"></p>
+  </div>
+  <p id="lobby-error" class="error" role="alert"></p>
+</main>
+
+<!-- ============ GAME ============ -->
+<div id="screen-game" class="screen game" hidden>
+  <header class="topbar">
+    <div class="top-left">
+      <span class="logo sm" aria-hidden="true"></span>
+      <strong>Room <span id="g-code"></span></strong>
+      <span id="g-flow" class="pill"></span>
+    </div>
+    <div class="top-progress" title="Your progress">
+      <div class="bar"><i id="g-bar"></i></div>
+      <span id="g-bar-label" class="muted small"></span>
+    </div>
+    <div id="g-players" class="chips" aria-label="Players"></div>
+  </header>
+
+  <div class="layout">
+    <!-- left: task -->
+    <aside class="col col-task" id="col-task">
+      <section id="task-card" class="panel"></section>
+      <section class="panel">
+        <h3>Team progress</h3>
+        <ul id="team" class="team"></ul>
+      </section>
+      <section class="panel">
+        <h3>Activity</h3>
+        <ul id="feed" class="feed"></ul>
+      </section>
+    </aside>
+
+    <!-- middle: terminal -->
+    <section class="col col-term" id="col-term">
+      <div class="term-wrap">
+        <div class="term-title"><span class="dots"><i></i><i></i><i></i></span><span id="term-title">terminal</span><button id="btn-clear" class="btn ghost tiny" type="button">clear</button></div>
+        <div id="term" class="term" tabindex="-1" aria-live="polite"></div>
+        <form id="term-form" class="term-input" autocomplete="off">
+          <span id="prompt" class="prompt"></span>
+          <input id="term-in" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Terminal input">
+        </form>
+      </div>
+      <div class="quick" id="quick" aria-label="Quick commands"></div>
+    </section>
+
+    <!-- right: tabs -->
+    <aside class="col col-side" id="col-side">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="files" class="active">Files</button>
+        <button role="tab" data-tab="branches">Branches</button>
+        <button role="tab" data-tab="local">My graph</button>
+        <button role="tab" data-tab="origin">Origin</button>
+      </nav>
+      <div class="tabbody" id="tab-files">
+        <div class="files-head"><span class="muted small">Click a file to edit it</span><button id="btn-newfile" class="btn small" type="button">＋ New file</button></div>
+        <ul id="files" class="files"></ul>
+        <div id="editor" class="editor" hidden>
+          <div class="editor-head"><b id="ed-path"></b><span id="ed-status" class="muted small"></span></div>
+          <div id="ed-conflict" class="conflict-bar" hidden>
+            <span>Conflict markers found:</span>
+            <button class="btn tiny" data-res="ours" type="button">Keep HEAD</button>
+            <button class="btn tiny" data-res="theirs" type="button">Keep incoming</button>
+            <button class="btn tiny" data-res="both" type="button">Keep both</button>
+          </div>
+          <textarea id="ed-text" spellcheck="false" aria-label="File editor"></textarea>
+          <div class="editor-actions">
+            <button id="ed-save" class="btn primary small" type="button">Save</button>
+            <button id="ed-close" class="btn ghost small" type="button">Close</button>
+            <button id="ed-del" class="btn ghost small danger" type="button">Delete file</button>
+          </div>
+        </div>
+      </div>
+      <div class="tabbody" id="tab-branches" hidden>
+        <h4>Local branches</h4><ul id="branches" class="branches"></ul>
+        <h4>On origin</h4><ul id="remote-branches" class="rb"></ul>
+        <h4>Tags</h4><div id="tags" class="muted small"></div>
+        <div id="stash-info" class="muted small"></div>
+      </div>
+      <div class="tabbody" id="tab-local" hidden>
+        <p class="muted small">Your local repository. Newest commit on top.</p>
+        <div id="graph-local" class="graph"></div>
+      </div>
+      <div class="tabbody" id="tab-origin" hidden>
+        <p class="muted small">The shared server copy everyone pushes to.</p>
+        <div id="graph-origin" class="graph"></div>
+      </div>
+    </aside>
+  </div>
+  <nav class="mobile-nav" id="mobile-nav">
+    <button data-pane="task" class="active">Task</button><button data-pane="term">Terminal</button><button data-pane="side">Files &amp; graph</button>
+  </nav>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
