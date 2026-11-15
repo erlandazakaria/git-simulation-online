@@ -18,7 +18,9 @@ function h(tag, props, ...kids) {
   return e;
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const md = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+const inlineMd = (t) => esc(t).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+// text with ```fenced blocks```: blocks keep their line breaks, the rest gets inline formatting
+const md = (s) => String(s).split(/```\n?/).map((part, i) => (i % 2 ? `<pre class="blk">${esc(part.replace(/\n$/, ''))}</pre>` : inlineMd(part.replace(/^\n/, '')))).join('');
 const COLORS = ['#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ff9bce', '#ffa657', '#56d4dd'];
 const colorOf = (name) => { let n = 0; for (const c of name) n = (n * 31 + c.charCodeAt(0)) >>> 0; return COLORS[n % COLORS.length]; };
 const avatar = (name) => h('span', { class: 'avatar', style: `background:${colorOf(name)}`, text: name.slice(0, 1).toUpperCase() });
@@ -187,7 +189,8 @@ function renderTask(v) {
     kids.push(h('div', { class: 'task-now' },
       h('div', { class: 'step', text: `Task ${p.taskIdx + 1} of ${p.taskCount}` }),
       h('h4', { text: t.title }),
-      h('p', { class: 'goal', html: md(t.goal) }),
+      h('div', { class: 'goal', html: md(t.goal) }),
+      t.feedback ? h('div', { class: 'feedback', role: 'alert' }, h('b', { text: '✋ Not accepted yet' }), h('div', { html: md(t.feedback) })) : null,
       h('div', { class: 'hints' }, ...t.hints.map((x, i) => hintBox(x, i))),
       t.hints.length < t.hintsTotal ? h('button', { class: 'btn small', onclick: () => send({ t: 'hint' }) }, `💡 ${t.hints.length ? 'Another hint' : 'Need a hint?'} (${t.hints.length}/${t.hintsTotal})`) : null,
       t.why ? h('p', { class: 'why', html: '<b>Why:</b> ' + md(t.why) }) : null));

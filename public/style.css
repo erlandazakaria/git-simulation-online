@@ -235,3 +235,8 @@ legend { font-size: 13px; color: var(--muted); padding: 0; margin-bottom: 6px; }
 .relay .ord { background: var(--panel-2); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; }
 .relay .ord.me { border-color: var(--accent); color: var(--accent-2); }
 .relay .arrow { color: var(--muted); }
+
+pre.blk { margin: 6px 0; padding: 8px 10px; background: #0a0e14; border: 1px solid var(--line); border-radius: 7px; font: 12.5px/1.5 var(--mono); color: var(--green); white-space: pre-wrap; overflow-x: auto; }
+.feedback { margin: 8px 0; padding: 8px 10px; border: 1px solid #5a2e2c; background: #241413; border-radius: 8px; font-size: 13.5px; }
+.feedback b { color: var(--red); display: block; margin-bottom: 2px; }
+.intro br + br { content: ""; display: block; margin-top: 6px; }

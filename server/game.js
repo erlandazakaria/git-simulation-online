@@ -377,7 +377,12 @@ export class Game {
     if (!pl.waiting && !pl.finished) {
       const t = tasks[pl.taskIdx];
       const shown = pl.hintShown[t.id] || 0;
-      base.progress.task = { id: t.id, title: t.title, goal: t.goal, why: t.why || null, hints: t.hints.slice(0, shown), hintsTotal: t.hints.length };
+      const c = this.ctx(room, pl);
+      let goal = t.goal, feedback = null;
+      try { if (typeof goal === 'function') goal = goal(c); } catch { goal = t.title; }
+      // only explain what is wrong once the player actually tried something for this task
+      if (t.explain && pl.hist.length > pl.taskHistStart) { try { feedback = t.explain(c) || null; } catch { feedback = null; } }
+      base.progress.task = { id: t.id, title: t.title, goal, feedback, why: t.why || null, hints: t.hints.slice(0, shown), hintsTotal: t.hints.length };
     }
     const r = pl.repo;
     const refs = {};
